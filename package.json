@@ -1,0 +1,23 @@
+{
+	"name": "peach-server",
+	"version": "1.0.0",
+	"description": "Basic configurable server used to handle simple similar aplications",
+	"main": "index.js",
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/nickpharrison/peach-server.git"
+	},
+	"author": "Nick Harrison",
+	"license": "ISC",
+	"bugs": {
+		"url": "https://github.com/nickpharrison/peach-server/issues"
+	},
+	"dependencies": {
+		"pg": "^8.4.1",
+		"qs": "^6.9.4"
+	},
+	"homepage": "https://github.com/nickpharrison/peach-server#readme"
+}

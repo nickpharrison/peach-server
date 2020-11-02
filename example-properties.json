@@ -1,0 +1,18 @@
+{
+	"server": {
+		"port": 1234,
+		"usessl": false
+	},
+	"database": {
+		"user": "username",
+		"password": "password",
+		"host": "localhost",
+		"database": "db_name",
+		"port": 5432,
+		"usessl": false
+	},
+	"security": {
+		"cert": "/path/to/certificate",
+		"key": "/path/to/key"
+	}
+}
