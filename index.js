@@ -68,7 +68,7 @@ class PeachServer {
 			database: this.properties.data.database.name,
 			port: this.properties.data.database.port
 		};
-		
+
 		if (this.properties.data.database.usessl) {
 			postgresOptions.ssl = {
 				rejectUnauthorized: false,
@@ -78,7 +78,7 @@ class PeachServer {
 		} else if (this.properties.data.database.host !== 'localhost') {
 			throw new Error(500, 'Must use an SSL encryption for non-localhost DB connections. Edit the server properties file.');
 		}
-	
+
 		this.dbPool = new PostgresPool(postgresOptions);
 
 	}
@@ -116,18 +116,24 @@ class PeachServer {
 		errorListener = null,
 		authenticateMethod = 'Basic'
 	}) {
-			
+
+		if (typeof requestListener !== 'function') {
+			throw new Error('A requestListener function must be passed');
+		}
+
 		const baseRequestListener = async (req, res) => {
 
 			let code = 200, data = '', contentType = 'text/plain', headers = {};
 
 			try {
 
+				const parsedUrl = url.parse(req.url);
+
 				const output = await requestListener({
 					req,
 					res,
-					pathArray: url.parse(req.url).pathname.replace(/^\/|\/$/g, '').split('/'),
-					query: qs.parse(url.query)
+					pathArray: parsedUrl.pathname.replace(/^\/|\/$/g, '').split('/'),
+					query: qs.parse(parsedUrl.query)
 				});
 
 				if (!res.finished && output !== undefined) {
@@ -149,7 +155,9 @@ class PeachServer {
 						throw new PeachError(500, 'Unknown output type of request listener');
 					}
 
-					headers['Content-Type'] = contentType;
+					if (typeof contentType === 'string') {
+						headers['Content-Type'] = contentType;
+					}
 
 					try {
 						res.writeHead(200, headers);
@@ -164,6 +172,7 @@ class PeachServer {
 				}
 
 			} catch(err) {
+
 				console.error(err);
 				code = 500;
 
@@ -217,7 +226,15 @@ class PeachServer {
 				res.end();
 
 			}
-		
+
+		}
+
+		if (this.properties.data.server == null) {
+			throw new Error('Server object in properties cannot be null');
+		}
+
+		if (!Number.isInteger(this.properties.data.server.port)) {
+			throw new Error('Server port value in properties must be an integer');
 		}
 
 		if (this.properties.data.server.usessl) {
@@ -299,6 +316,43 @@ class PeachServer {
 		const contentType = PeachServer.getContentType(fileName, true);
 		const data = PeachServer.getFile(filePath, replacements);
 		PeachServer.returnData(res, code, contentType, data, headers);
+	}
+
+	static assertPathLength(pathArray, length) {
+		if (pathArray.length !== length) {
+			throw new PeachError(404, 'Not Found: /' + pathArray.join('/'));
+		}
+	}
+
+	static assertMethod(req, methods) {
+		if (methods.includes(req.method)) {
+			return req.method;
+		}
+		throw new PeachError(405, 'Invalid Verb');
+	}
+
+	static getRequestData(req, options = {}) {
+		return new Promise((resolve, reject) => {
+			try {
+				let body = '';
+				req.on('data', (data) => {
+					body += data;
+				});
+				req.on('end', () => {
+					if (options.json) {
+						try {
+							body = JSON.parse(body);
+						} catch(err) {
+							reject(new PeachError(400, `Expected JSON input - ${err.message}`));
+							return;
+						}
+					}
+					resolve(body);
+				});
+			} catch (err) {
+				reject(err);
+			}
+		});
 	}
 
 }
