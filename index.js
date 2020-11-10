@@ -136,7 +136,7 @@ class PeachServer {
 					query: qs.parse(parsedUrl.query)
 				});
 
-				if (!res.finished && output !== undefined) {
+				if (!res.finished) {
 
 					if (output === '' || output == null) {
 						code = 204;
@@ -160,7 +160,7 @@ class PeachServer {
 					}
 
 					try {
-						res.writeHead(200, headers);
+						res.writeHead(code, headers);
 					} catch(err) {
 					}
 
@@ -179,7 +179,7 @@ class PeachServer {
 				if (err instanceof PeachError) {
 					if (Number.isInteger(err.status)) {
 						code = err.status;
-						if (code === 401 || code === 403) {
+						if ((code === 401 || code === 403) && typeof authenticateMethod === 'string') {
 							headers['WWW-Authenticate'] = authenticateMethod;
 						}
 					}
@@ -227,7 +227,7 @@ class PeachServer {
 
 			}
 
-		}
+		};
 
 		if (this.properties.data.server == null) {
 			throw new Error('Server object in properties cannot be null');
