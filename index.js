@@ -321,7 +321,7 @@ class PeachServer {
 	}
 
 	static returnFile(res, code, filePath, headers = {}, replacements = undefined) {
-		const contentType = PeachServer.getContentType(fileName, true);
+		const contentType = PeachServer.getContentType(filePath, true);
 		const data = PeachServer.getFile(filePath, replacements);
 		PeachServer.returnData(res, code, contentType, data, headers);
 	}
