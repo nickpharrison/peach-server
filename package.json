@@ -16,6 +16,7 @@
 		"url": "https://github.com/nickpharrison/peach-server/issues"
 	},
 	"dependencies": {
+		"cookies": "^0.8.0",
 		"pg": "^8.4.1",
 		"qs": "^6.9.4"
 	},

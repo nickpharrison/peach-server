@@ -1,4 +1,5 @@
 const {Pool: PostgresPool} = require('pg');
+const Cookies = require('cookies');
 const url = require('url');
 const qs = require('qs');
 const fs = require('fs');
@@ -133,10 +134,13 @@ class PeachServer {
 					req,
 					res,
 					pathArray: parsedUrl.pathname.replace(/^\/|\/$/g, '').split('/'),
-					query: qs.parse(parsedUrl.query)
+					query: qs.parse(parsedUrl.query),
+					cookies: new Cookies(req, res, {
+						secure: this.properties.data.server.usessl
+					})
 				});
 
-				if (!res.finished) {
+				if (res._header == null) {
 
 					if (output === '' || output == null) {
 						code = 204;
@@ -248,6 +252,8 @@ class PeachServer {
 
 			httpsServer.listen(this.properties.data.server.port, '::');
 
+			// return httpsServer;
+
 		} else {
 
 			const http = getServerModule('http');
@@ -255,6 +261,8 @@ class PeachServer {
 			const httpServer = http.createServer(baseRequestListener);
 
 			httpServer.listen(this.properties.data.server.port, '::1');
+
+			// return httpServer;
 
 		}
 
