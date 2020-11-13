@@ -1,5 +1,6 @@
 const {Pool: PostgresPool} = require('pg');
 const Cookies = require('cookies');
+const path = require('path');
 const url = require('url');
 const qs = require('qs');
 const fs = require('fs');
@@ -298,12 +299,17 @@ class PeachServer {
 		res.write(data);
 	}
 
-	static getFile(filePath, replacements) {
+	static getFile(folderPath, fileName, replacements) {
 		let data;
+		const folderPathTrailing = path.join(folderPath, path.sep)
+		const fullPath = path.join(folderPathTrailing, fileName);
+		if (fullPath !== folderPathTrailing + fileName) {
+			throw new PeachError(404, 'Stop trying to snoop by traversing, eh?');
+		}
 		try {
-			data = fs.readFileSync(filePath);
+			data = fs.readFileSync(fullPath);
 		} catch (err) {
-			throw new PeachError(404, 'File not found');
+			throw new PeachError(404, `File not found: ${fullPath}`);
 		}
 		if (replacements == null) {
 			return data;
@@ -320,9 +326,9 @@ class PeachServer {
 		return data;
 	}
 
-	static returnFile(res, code, filePath, headers = {}, replacements = undefined) {
-		const contentType = PeachServer.getContentType(filePath, true);
-		const data = PeachServer.getFile(filePath, replacements);
+	static returnFile(res, code, folderPath, fileName, headers = {}, replacements = undefined) {
+		const contentType = PeachServer.getContentType(fileName, true);
+		const data = PeachServer.getFile(folderPath, fileName, replacements);
 		PeachServer.returnData(res, code, contentType, data, headers);
 	}
 
