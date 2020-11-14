@@ -46,25 +46,35 @@ class PeachServer {
 
 		this.properties = new PeachProperties(peachPropertiesPath);
 
-		const postgresOptions = {
-			user: this.properties.data.database.username,
-			password: this.properties.data.database.password,
-			host: this.properties.data.database.host,
-			database: this.properties.data.database.name,
-			port: this.properties.data.database.port
-		};
+		this.dbPools = [];
 
-		if (this.properties.data.database.usessl) {
-			postgresOptions.ssl = {
-				rejectUnauthorized: false,
-				key: this.getKey(),
-				cert: this.getCert()
-			};
-		} else if (this.properties.data.database.host !== 'localhost') {
-			throw new Error(500, 'Must use an SSL encryption for non-localhost DB connections. Edit the server properties file.');
+		if (Array.isArray(this.properties.data.databases)) {
+
+			this.properties.data.databases.forEach((dataBaseProperties) => {
+
+				const postgresOptions = {
+					user: dataBaseProperties.username,
+					password: dataBaseProperties.password,
+					host: dataBaseProperties.host,
+					database: dataBaseProperties.name,
+					port: dataBaseProperties.port
+				};
+		
+				if (dataBaseProperties.usessl) {
+					postgresOptions.ssl = {
+						rejectUnauthorized: false,
+						key: this.getKey(),
+						cert: this.getCert()
+					};
+				} else if (dataBaseProperties.host !== 'localhost') {
+					throw new Error(500, 'Must use an SSL encryption for non-localhost DB connections. Edit the server properties file.');
+				}
+		
+				this.dbPools.push(new PostgresPool(postgresOptions));
+		
+			});
+
 		}
-
-		this.dbPool = new PostgresPool(postgresOptions);
 
 	}
 

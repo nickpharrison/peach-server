@@ -7,7 +7,7 @@ const peachServer = new PeachServer({
 	peachPropertiesPath: path.join(__dirname, '/example-properties.json')
 });
 
-const dbPool = peachServer.dbPool;
+const dbPool = peachServer.dbPools[0];
 const properties = peachServer.properties;
 
 const requestListener = async ({req, res, pathArray, query}) => {
