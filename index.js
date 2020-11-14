@@ -5,24 +5,6 @@ const url = require('url');
 const qs = require('qs');
 const fs = require('fs');
 
-let http, https;
-
-const getServerModule = (serverType) => {
-	if (serverType === 'http') {
-		if (http === undefined) {
-			http = require('http');
-		}
-		return http;
-	}
-	if (serverType === 'https') {
-		if (https === undefined) {
-			https = require('https');
-		}
-		return https;
-	}
-	throw new Error('Can only fetch http or https module');
-}
-
 class PeachProperties {
 
 	constructor(propertiesPath) {
@@ -44,9 +26,10 @@ class PeachProperties {
 
 class PeachError extends Error {
 
-	constructor(status, message, peachCode = null) {
+	constructor(status, message, rootCause, peachCode) {
 		super(message);
 		this.status = status;
+		this.rootCause = rootCause;
 		this.peachCode = peachCode;
 	}
 
@@ -244,7 +227,7 @@ class PeachServer {
 
 		if (this.properties.data.server.usessl) {
 
-			const https = getServerModule('https');
+			const https = require('https');
 
 			const httpsServer = https.createServer({
 				key: this.getKey(),
@@ -257,7 +240,7 @@ class PeachServer {
 
 		} else {
 
-			const http = getServerModule('http');
+			const http = require('http');
 
 			const httpServer = http.createServer(baseRequestListener);
 
