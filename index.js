@@ -281,6 +281,8 @@ class PeachServer {
 			return 'image/gif';
 			case 'txt':
 			return 'text/plain';
+			case 'woff2':
+			return 'font/woff2';
 		}
 		console.error(`Unknown content type for "${extension}"`);
 		return 'text/plain';
