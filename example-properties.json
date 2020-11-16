@@ -1,7 +1,11 @@
 {
 	"server": {
 		"port": 1234,
-		"usessl": false
+		"usessl": false,
+		"acceptedhosts": ["www.example.com", "example.com", "localhost:1234"],
+		"defaultorigin": "https://www.example.com",
+		"xproxysecret": "X-Proxy-Secret",
+		"trustedproxiessetxforwardedheaders": true
 	},
 	"databases": [
 		{

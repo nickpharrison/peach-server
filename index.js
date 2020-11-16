@@ -67,7 +67,7 @@ class PeachServer {
 						cert: this.getCert()
 					};
 				} else if (dataBaseProperties.host !== 'localhost') {
-					throw new Error(500, 'Must use an SSL encryption for non-localhost DB connections. Edit the server properties file.');
+					throw new Error('Must use an SSL encryption for non-localhost DB connections. Edit the server properties file.');
 				}
 		
 				this.dbPools.push(new PostgresPool(postgresOptions));
@@ -86,7 +86,7 @@ class PeachServer {
 			try {
 				this.cert = fs.readFileSync(this.properties.data.security.cert, 'utf8');
 			} catch (err) {
-				throw new Error(`Could not read the cert file, an error occurred`);
+				throw new Error('Could not read the cert file, an error occurred');
 			}
 		}
 		return this.cert;
@@ -100,10 +100,34 @@ class PeachServer {
 			try {
 				this.key = fs.readFileSync(this.properties.data.security.key, 'utf8');
 			} catch (err) {
-				throw new Error(`Could not read the key file, an error occurred`);
+				throw new Error('Could not read the key file, an error occurred');
 			}
 		}
 		return this.key;
+	}
+
+	getRequestInfo(req) {
+
+		const acceptedHosts = Array.isArray(this.properties.data.server.acceptedhosts) ? this.properties.data.server.acceptedhosts : [];
+
+		const proxyIsUsed = this.properties.data.server.trustedproxiessetxforwardedheaders && req.headers['x-proxy-secret'] != null && req.headers['x-proxy-secret'] === this.properties.data.server.xproxysecret;
+
+		const proto = proxyIsUsed ? req.headers['x-forwarded-proto'] : (req.connection.encrypted ? 'https' : 'http');
+
+		const rawHost = proxyIsUsed ? req.headers['x-forwarded-host'] : req.headers['host'];
+		const host = acceptedHosts.includes(rawHost) ? rawHost : (acceptedHosts[0] || '');
+
+		const origin = (host && proto) ? `${proto}://${host}` : (typeof this.properties.data.server.defaultorigin === 'string' ? this.properties.data.server.defaultorigin : '');
+
+		const requrl = url.parse(`${origin}${req.url}`);
+
+		requrl.origin = requrl.protocol && requrl.host ? `${requrl.protocol}//${requrl.host}` : null;
+
+		return {
+			requrl,
+			ip: null
+		};
+
 	}
 
 	start({
@@ -122,15 +146,15 @@ class PeachServer {
 
 			try {
 
-				const parsedUrl = url.parse(req.url);
+				const {requrl, ip} = this.getRequestInfo(req);
 
 				const output = await requestListener({
 					req,
 					res,
-					pathArray: parsedUrl.pathname.replace(/^\/|\/$/g, '').split('/'),
-					query: qs.parse(parsedUrl.query),
+					requrl,
+					ip,
 					cookies: new Cookies(req, res, {
-						secure: this.properties.data.server.usessl
+						secure: !(requrl.protocol === 'http:' && requrl.hostname === 'localhost')
 					})
 				});
 
