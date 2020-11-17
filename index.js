@@ -2,8 +2,18 @@ const {Pool: PostgresPool} = require('pg');
 const Cookies = require('cookies');
 const path = require('path');
 const url = require('url');
-const qs = require('qs');
 const fs = require('fs');
+
+PostgresPool.prototype.actualQueryForPeachServer = PostgresPool.prototype.query;
+
+PostgresPool.prototype.query = async function (...args) {
+	try {
+		return await this.actualQueryForPeachServer(...args);
+	} catch (err) {
+		err.stack = (new Error(err.stack.split('\n', 1)[0])).stack;
+		throw err;
+	}
+}
 
 class PeachProperties {
 
