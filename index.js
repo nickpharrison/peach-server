@@ -1,3 +1,4 @@
+const WebSocket = require("ws");
 const {Pool: PostgresPool} = require('pg');
 const Cookies = require('cookies');
 const path = require('path');
@@ -10,7 +11,7 @@ PostgresPool.prototype.query = async function (...args) {
 	try {
 		return await this.actualQueryForPeachServer(...args);
 	} catch (err) {
-		err.stack = (new Error(err.stack.split('\n', 1)[0])).stack;
+		err.stack = (new Error(err.message)).stack;
 		throw err;
 	}
 }
@@ -143,7 +144,8 @@ class PeachServer {
 	start({
 		requestListener,
 		errorListener = null,
-		authenticateMethod = 'Basic'
+		authenticateMethod = 'Basic',
+		websocket: websocketFunction = null
 	}) {
 
 		if (typeof requestListener !== 'function') {
@@ -269,28 +271,36 @@ class PeachServer {
 			throw new Error('Server port value in properties must be an integer');
 		}
 
+		let server;
+
 		if (this.properties.data.server.usessl) {
 
 			const https = require('https');
 
-			const httpsServer = https.createServer({
+			server = https.createServer({
 				key: this.getKey(),
 				cert: this.getCert()
 			}, baseRequestListener);
 
-			httpsServer.listen(this.properties.data.server.port, '::');
-
-			// return httpsServer;
+			server.listen(this.properties.data.server.port, '::');
 
 		} else {
 
 			const http = require('http');
 
-			const httpServer = http.createServer(baseRequestListener);
+			server = http.createServer(baseRequestListener);
 
-			httpServer.listen(this.properties.data.server.port, '::1');
+			server.listen(this.properties.data.server.port, '::1');
 
-			// return httpServer;
+		}
+
+		if (typeof websocketFunction === 'function') {
+
+			const wsServer = new WebSocket.Server({server});
+			
+			wsServer.on("connection", (webSocket) => {
+				websocketFunction(webSocket);
+			});
 
 		}
 

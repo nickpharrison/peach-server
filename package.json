@@ -18,7 +18,8 @@
 	"dependencies": {
 		"cookies": "^0.8.0",
 		"pg": "^8.4.1",
-		"qs": "^6.9.4"
+		"qs": "^6.9.4",
+		"ws": "^7.4.0"
 	},
 	"homepage": "https://github.com/nickpharrison/peach-server#readme"
 }
