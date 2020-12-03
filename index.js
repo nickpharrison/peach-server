@@ -145,7 +145,7 @@ class PeachServer {
 		requestListener,
 		errorListener = null,
 		authenticateMethod = 'Basic',
-		websocket: websocketFunction = null
+		websocket: websocketConnection = null
 	}) {
 
 		if (typeof requestListener !== 'function') {
@@ -294,12 +294,12 @@ class PeachServer {
 
 		}
 
-		if (typeof websocketFunction === 'function') {
+		if (typeof websocketConnection === 'function') {
 
 			const wsServer = new WebSocket.Server({server});
-			
-			wsServer.on("connection", (webSocket) => {
-				websocketFunction(webSocket);
+
+			wsServer.on("connection", async (webSocket) => {
+				await websocketConnection(webSocket);
 			});
 
 		}
