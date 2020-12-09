@@ -167,7 +167,8 @@ class PeachServer {
 		requestListener,
 		errorListener = null,
 		authenticateMethod = 'Basic',
-		websocketConnection = null
+		websocketConnection = null,
+		incrementPort = 0
 	}) {
 
 		if (typeof requestListener !== 'function') {
@@ -305,7 +306,7 @@ class PeachServer {
 				cert: this.getCert()
 			}, baseRequestListener);
 
-			server.listen(this.properties.data.server.port, '::');
+			server.listen(this.properties.data.server.port + incrementPort, '::');
 
 		} else {
 
@@ -313,7 +314,7 @@ class PeachServer {
 
 			server = http.createServer(baseRequestListener);
 
-			server.listen(this.properties.data.server.port, '::1');
+			server.listen(this.properties.data.server.port + incrementPort, '::1');
 
 		}
 
