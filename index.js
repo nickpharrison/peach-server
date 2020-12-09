@@ -77,8 +77,6 @@ class PeachServer {
 						key: this.getKey(),
 						cert: this.getCert()
 					};
-				} else if (dataBaseProperties.host !== 'localhost') {
-					throw new Error('Must use an SSL encryption for non-localhost DB connections. Edit the server properties file.');
 				}
 		
 				this.dbPools.push(new PostgresPool(postgresOptions));
