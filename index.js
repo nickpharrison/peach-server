@@ -128,28 +128,28 @@ class PeachServer {
 
 		const origin = (host && proto) ? `${proto}://${host}` : (typeof this.properties.data.server.defaultorigin === 'string' ? this.properties.data.server.defaultorigin : '');
 
-		let url;
+		let adjustedurl;
 		let basepath;
 		let basepaths = this.properties.data.server.basepaths;
 		if (Array.isArray(basepaths)) {
 			for (const testbasepath of basepaths) {
 				if (req.url.startsWith(testbasepath)) {
 					basepath = testbasepath;
-					url = req.url.substr(basepath.length);
+					adjustedurl = req.url.substr(basepath.length);
 					break;
 				}
 			}
-			if (url == null) {
+			if (adjustedurl == null) {
 				throw new PeachError(500, 'Request did not have an expected string at the beginning of the URL');
 			}
 		} else if (basepaths == null) {
 			basepath = '';
-			url = req.url;
+			adjustedurl = req.url;
 		} else {
 			throw new PeachError(500, 'Improperly configured server for server.basepaths property');
 		}
 
-		const requrl = url.parse(`${origin}${url}`);
+		const requrl = url.parse(`${origin}${adjustedurl}`);
 
 		requrl.origin = requrl.protocol && requrl.host ? `${requrl.protocol}//${requrl.host}` : null;
 
