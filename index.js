@@ -130,12 +130,34 @@ class PeachServer {
 
 		const origin = (host && proto) ? `${proto}://${host}` : (typeof this.properties.data.server.defaultorigin === 'string' ? this.properties.data.server.defaultorigin : '');
 
-		const requrl = url.parse(`${origin}${req.url}`);
+		let url;
+		let basepath;
+		let basepaths = this.properties.data.server.basepaths;
+		if (Array.isArray(basepaths)) {
+			for (const testbasepath of basepaths) {
+				if (req.url.startsWith(testbasepath)) {
+					basepath = testbasepath;
+					url = req.url.substr(basepath.length);
+					break;
+				}
+			}
+			if (url == null) {
+				throw new PeachError(500, 'Request did not have an expected string at the beginning of the URL');
+			}
+		} else if (basepaths == null) {
+			basepath = '';
+			url = req.url;
+		} else {
+			throw new PeachError(500, 'Improperly configured server for server.basepaths property');
+		}
+
+		const requrl = url.parse(`${origin}${url}`);
 
 		requrl.origin = requrl.protocol && requrl.host ? `${requrl.protocol}//${requrl.host}` : null;
 
 		return {
 			requrl,
+			basepath,
 			ip: null
 		};
 
@@ -145,7 +167,7 @@ class PeachServer {
 		requestListener,
 		errorListener = null,
 		authenticateMethod = 'Basic',
-		websocket: websocketConnection = null
+		websocketConnection = null
 	}) {
 
 		if (typeof requestListener !== 'function') {
@@ -158,12 +180,13 @@ class PeachServer {
 
 			try {
 
-				const {requrl, ip} = this.getRequestInfo(req);
+				const {requrl, basepath, ip} = this.getRequestInfo(req);
 
 				const output = await requestListener({
 					req,
 					res,
 					requrl,
+					basepath,
 					ip,
 					cookies: new Cookies(req, res, {
 						secure: !(requrl.protocol === 'http:' && requrl.hostname === 'localhost')
@@ -298,8 +321,8 @@ class PeachServer {
 
 			const wsServer = new WebSocket.Server({server});
 
-			wsServer.on("connection", async (webSocket) => {
-				await websocketConnection(webSocket);
+			wsServer.on("connection", async (...args) => {
+				await websocketConnection(...args);
 			});
 
 		}
