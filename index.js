@@ -4,6 +4,7 @@ const Cookies = require('cookies');
 const path = require('path');
 const url = require('url');
 const fs = require('fs');
+const stream = require("stream");
 
 PostgresPool.prototype.actualQueryForPeachServer = PostgresPool.prototype.query;
 
@@ -46,6 +47,16 @@ class PeachError extends Error {
 
 }
 
+class PeachOutput {
+
+	constructor(data, contentType, code) {
+		this.code = code;
+		this.data = data;
+		this.contentType = contentType;
+	}
+
+}
+
 class PeachServer {
 
 	constructor({
@@ -70,7 +81,7 @@ class PeachServer {
 					database: dataBaseProperties.name,
 					port: dataBaseProperties.port
 				};
-		
+
 				if (dataBaseProperties.usessl) {
 					postgresOptions.ssl = {
 						rejectUnauthorized: false,
@@ -78,9 +89,9 @@ class PeachServer {
 						cert: this.getCert()
 					};
 				}
-		
+
 				this.dbPools.push(new PostgresPool(postgresOptions));
-		
+
 			});
 
 		}
@@ -165,7 +176,8 @@ class PeachServer {
 		requestListener,
 		errorListener = null,
 		authenticateMethod = 'Basic',
-		websocketConnection = null,
+		websocketData = null,
+		websocketPingPongTimeout = 30000,
 		incrementPort = 0
 	}) {
 
@@ -175,7 +187,7 @@ class PeachServer {
 
 		const baseRequestListener = async (req, res) => {
 
-			let code = 200, data = '', contentType = 'text/plain', headers = {};
+			let code = 200, data = '', contentType = 'text/plain', headers = {}, preventAutoResEnd = false;
 
 			try {
 
@@ -194,10 +206,16 @@ class PeachServer {
 
 				if (res._header == null) {
 
-					if (output === '' || output == null) {
+					if (output instanceof PeachOutput) {
+						code = output.code || code;
+						contentType = output.contentType || contentType;
+						data = output.data || data;
+					} else if (output === '' || output == null) {
 						code = 204;
 					} else if (typeof output === 'object') {
-						if (output instanceof Buffer) {
+						if (output instanceof stream.Readable || output instanceof stream.Transform) {
+							data = output;
+						} else if (output instanceof Buffer) {
 							data = output;
 							contentType = 'text/html';
 						} else {
@@ -221,8 +239,17 @@ class PeachServer {
 					}
 
 					try {
-						res.write(data);
+						if (data instanceof stream.Readable || data instanceof stream.Transform) {
+							data.pipe(res);
+							preventAutoResEnd = true;
+							data.on('end', () => {
+								res.end();
+							});
+						} else {
+							res.write(data);
+						}
 					} catch(err) {
+						1 + 1;
 					}
 
 				}
@@ -279,7 +306,9 @@ class PeachServer {
 
 			} finally {
 
-				res.end();
+				if (!preventAutoResEnd) {
+					res.end();
+				}
 
 			}
 
@@ -316,12 +345,78 @@ class PeachServer {
 
 		}
 
-		if (typeof websocketConnection === 'function') {
+		if (typeof websocketData === 'object' && websocketData != null) {
 
 			const wsServer = new WebSocket.Server({server});
 
-			wsServer.on("connection", async (...args) => {
-				await websocketConnection(...args);
+			wsServer.on('connection', async (websocket, req) => {
+
+				const sendMessage = (type, content) => {
+					websocket.send(JSON.stringify({type, content}));
+				}
+
+				const terminate = () => {
+					websocket.terminate(message);
+				}
+
+				const handleError = (err) => {
+					let content;
+					if (err instanceof PeachError) {
+						content = {
+							status: err.status,
+							message: err.message,
+							error_code: err.peachCode || null
+						};
+					} else {
+						content = {
+							status: 500,
+							message: 'Server encountered an error during websocket connection',
+							error_code: null
+						};
+					}
+					sendMessage('error', content);
+				}
+
+				websocket.isAlive = true;
+				websocket.on('pong', () => {
+					websocket.isAlive = true;
+				});
+
+				const {requrl, basepath, ip} = this.getRequestInfo(req);
+
+				if (typeof websocketData.onconnection === 'function') {
+					websocketData.onconnection({
+						req,
+						sendMessage,
+						terminate,
+						handleError,
+						requrl,
+						basepath,
+						ip,
+						cookies: new Cookies(req, null, {
+							secure: !(requrl.protocol === 'http:' && requrl.hostname === 'localhost')
+						})
+					}).catch((err) => {
+						handleError(err);
+						terminate();
+					});
+				}
+
+			});
+
+			const pingponginterval = setInterval(() => {
+				for (const websocket of wsServer.clients) {
+					if (websocket.isAlive) {
+						websocket.isAlive = false;
+						websocket.ping(() => {});
+					} else {
+						websocket.terminate();
+					}
+				}
+			}, websocketPingPongTimeout);
+
+			wsServer.on('close', () => {
+				clearInterval(pingponginterval);
 			});
 
 		}
@@ -343,6 +438,9 @@ class PeachServer {
 			case 'ico':
 			case 'png':
 			return 'image/png';
+			case 'jpg':
+			case 'jpeg':
+			return 'image/jpeg';
 			case 'gif':
 			return 'image/gif';
 			case 'txt':
@@ -418,7 +516,7 @@ class PeachServer {
 						try {
 							body = JSON.parse(body);
 						} catch(err) {
-							reject(new PeachError(400, `Expected JSON input - ${err.message}`));
+							reject(new PeachError(400, `Expected JSON input: ${err.message}`));
 							return;
 						}
 					}
@@ -432,5 +530,6 @@ class PeachServer {
 
 }
 
-exports.PeachServer = PeachServer;
-exports.PeachError = PeachError;
+module.exports.PeachServer = PeachServer;
+module.exports.PeachError = PeachError;
+module.exports.PeachOutput = PeachOutput;
