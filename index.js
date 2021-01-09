@@ -242,9 +242,6 @@ class PeachServer {
 						if (data instanceof stream.Readable || data instanceof stream.Transform) {
 							data.pipe(res);
 							preventAutoResEnd = true;
-							data.on('end', () => {
-								res.end();
-							});
 						} else {
 							res.write(data);
 						}
@@ -447,6 +444,8 @@ class PeachServer {
 			return 'text/plain';
 			case 'woff2':
 			return 'font/woff2';
+			case 'apng':
+			return 'image/vnd.mozilla.apng';
 		}
 		console.error(`Unknown content type for "${extension}"`);
 		return 'text/plain';
