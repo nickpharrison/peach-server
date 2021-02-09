@@ -188,7 +188,16 @@ class PeachServer {
 
 		const baseRequestListener = async (req, res) => {
 
-			let code = 200, data = '', contentType = 'text/plain', headers = {}, preventAutoResEnd = false;
+			if (req.method === 'OPTIONS') {
+				res.writeHead(200, {
+					'Access-Control-Allow-Origin': '*',
+					'Access-Control-Allow-Headers': req.headers['access-control-request-headers']
+				});
+				res.end();
+				return;
+			}
+
+			let code = 200, data = '', contentType = 'text/plain', headers = {'Access-Control-Allow-Origin': '*'}, preventAutoResEnd = false;
 
 			try {
 
@@ -454,6 +463,7 @@ class PeachServer {
 
 	static returnData(res, code, contentType, data, headers = {}) {
 		headers['Content-Type'] = contentType;
+		headers['Access-Control-Allow-Origin'] = '*';
 		res.writeHead(code, headers);
 		res.write(data);
 	}

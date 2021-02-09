@@ -1,6 +1,6 @@
 {
 	"name": "peach-server",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "Basic configurable server used to handle simple similar aplications",
 	"main": "index.js",
 	"scripts": {
