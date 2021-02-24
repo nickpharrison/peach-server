@@ -9,10 +9,10 @@
 	},
 	"databases": [
 		{
-			"user": "username",
+			"username": "username",
 			"password": "password",
 			"host": "localhost",
-			"database": "db_name",
+			"name": "db_name",
 			"port": 5432,
 			"usessl": false
 		}

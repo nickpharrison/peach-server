@@ -1,14 +1,25 @@
-const WebSocket = require("ws");
-const {Pool: PostgresPool} = require('pg');
-const Cookies = require('cookies');
-const path = require('path');
-const url = require('url');
-const fs = require('fs');
-const stream = require("stream");
+import pg from 'pg';
+import WebSocket from 'ws';
+import Cookies from 'cookies';
+import path from 'path';
+import url from 'url';
+import fs from 'fs';
+import stream from 'stream';
+import http from 'http';
+import https from 'https';
 
-PostgresPool.prototype.actualQueryForPeachServer = PostgresPool.prototype.query;
-
-PostgresPool.prototype.query = async function (...args) {
+// Alter the query method on the pool and connection so that errors are handled with an actual readable stack trace to make debugging easier
+pg.Pool.prototype.actualQueryForPeachServer = pg.Pool.prototype.query;
+pg.Pool.prototype.query = async function (...args) {
+	try {
+		return await this.actualQueryForPeachServer(...args);
+	} catch (err) {
+		err.stack = (new Error(err.message)).stack;
+		throw err;
+	}
+}
+pg.Connection.prototype.actualQueryForPeachServer = pg.Connection.prototype.query;
+pg.Connection.prototype.query = async function (...args) {
 	try {
 		return await this.actualQueryForPeachServer(...args);
 	} catch (err) {
@@ -17,125 +28,371 @@ PostgresPool.prototype.query = async function (...args) {
 	}
 }
 
-class PeachError extends Error {
+export class PeachError extends Error {
 
-	constructor(status, message, rootCause, peachCode) {
+	/**
+	 * 
+	 * @param {number} status The HTTP status code of the error
+	 * @param {string} message The message describing the error
+	 * @param {object} other Other information about the error
+	 * @param {string|number} other.errorcode A code specific to this error to allow the source of the error to be easily identifiable
+	 * @param {Error} other.rootcause The error that caused this error to occur
+	 * @param {object} other.headers The headers that should be sent in a HTTP response if this error is thrown all the way to the serevr level
+	 */
+	constructor(status, message, {errorcode, rootcause, headers = {}} = {}) {
 		super(message);
 		this.status = status;
-		this.rootCause = rootCause;
-		this.peachCode = peachCode;
+		this.rootcause = rootcause;
+		this.errorcode = errorcode;
+		this.headers = headers;
 	}
 
 }
 
-class PeachOutput {
+export class PeachOutput {
 
-	constructor(data, contentType, code) {
-		this.code = code;
+	/**
+	 * 
+	 * @param {number} status The HTTP status code for the repsonse
+	 * @param {any} data The data for the HTTP response body
+	 * @param {object} other Other information about the response
+	 * @param {object} other.headers The headers to be sent in this HTTP response
+	 */
+	constructor(status, data, {headers = {}} = {}) {
+		this.status = status;
 		this.data = data;
-		this.contentType = contentType;
+		this.headers = headers;
 	}
 
 }
 
-class PeachServer {
+export class PeachFile {
+
+	/**
+	 * 
+	 * @param {number} status The HTTP status code for the repsonse
+	 * @param {string} folder The (unescapable) folder that the file is in
+	 * @param {string} file The path of the file relative to the specified folder
+	 * @param {object} other Other information about the response
+	 * @param {{search: RegExp|string, replace: string}[]} other.replacements Replacements to perform on the file before sending it to the user. If search is a string, only the first occurance will be replaced. Note that specifying this results in the file being sent in a non-streaming manner
+	 * @param {object} other.headers The headers that should be sent in a HTTP response
+	 * @param {object} other.encoding The encoding the file should be read with
+	 */
+	constructor(status, folder, file, {replacements = null, headers = {}, encoding} = {}) {
+		this.status = status;
+		this.folder = folder;
+		this.file = file;
+		this.replacements = replacements;
+		this.headers = headers;
+		this.encoding = encoding;
+	}
+
+}
+
+class PeachServerProperties {
+
+	constructor({
+		port,
+		usessl,
+		basepaths,
+		acceptedhosts,
+		trustedproxiessetxforwardedheaders,
+		xproxysecret
+	}) {
+
+		if (typeof port !== 'number' || !Number.isInteger(port) || port < 1) {
+			throw new Error('Peach Properties server.port must be a positive integer');
+		}
+		this.port = port;
+
+		if (typeof usessl !== 'boolean') {
+			throw new Error('Peach Properties server.usessl must be a boolean');
+		}
+		this.usessl = usessl;
+
+		if (basepaths == null) {
+			this.basepaths = null;
+		} else if (Array.isArray(basepaths)) {
+			this.basepaths = basepaths.map((basepath) => {
+				if (typeof basepath !== 'string') {
+					throw new Error('Peach Properties server.basepaths contained a non-string value');
+				}
+				return basepath;
+			})
+		} else {
+			throw new Error('Peach Properties server.basepaths must be an array or null');
+		}
+
+		if (acceptedhosts == null) {
+			this.acceptedhosts = null;
+		} else if (Array.isArray(acceptedhosts)) {
+			this.acceptedhosts = acceptedhosts.map((host) => {
+				if (typeof host !== 'string') {
+					throw new Error('Peach Properties server.acceptedhosts contained a non-string value');
+				}
+				return host;
+			})
+		} else {
+			throw new Error('Peach Properties server.acceptedhosts must be an array or null');
+		}
+
+		if (typeof trustedproxiessetxforwardedheaders !== 'boolean') {
+			throw new Error('Peach Properties server.trustedproxiessetxforwardedheaders must be a boolean');
+		}
+		this.trustedproxiessetxforwardedheaders = trustedproxiessetxforwardedheaders;
+
+		if (typeof xproxysecret === 'string') {
+			this.xproxysecret = xproxysecret;
+		} else if (xproxysecret != null) {
+			throw new Error('Peach Properties server.xproxysecret must be a boolean');
+		} else if (this.trustedproxiessetxforwardedheaders) {
+			throw new Error('Peach Properties server.xproxysecret must be a string if server.trustedproxiessetxforwardedheaders is true');
+		} else {
+			this.xproxysecret = null;
+		}
+
+	}
+
+}
+
+class PeachDatabaseProperties {
+
+	constructor({
+		username,
+		password,
+		host,
+		name,
+		port,
+		usessl
+	}) {
+
+		if (typeof username !== 'string') {
+			throw new Error('Peach Properties databases[].username must be a string');
+		}
+		this.username = username;
+
+		if (typeof password !== 'string') {
+			throw new Error('Peach Properties databases[].password must be a string');
+		}
+		this.password = password;
+
+		if (typeof host !== 'string') {
+			throw new Error('Peach Properties databases[].host must be a string');
+		}
+		this.host = host;
+
+		if (typeof name !== 'string') {
+			throw new Error('Peach Properties databases[].name must be a string');
+		}
+		this.name = name;
+
+		if (typeof port !== 'number' || !Number.isInteger(port) || port < 1) {
+			throw new Error('Peach Properties databases[].port must be a positive integer');
+		}
+		this.port = port;
+
+		if (typeof usessl !== 'boolean') {
+			throw new Error('Peach Properties databases[].usessl must be a boolean');
+		}
+		this.usessl = usessl;
+
+	}
+
+}
+
+class PeachSecurityProperties {
+
+	constructor({
+		cert,
+		key
+	}) {
+
+		if (typeof cert === 'string') {
+			this.cert = cert;
+		} else if (cert == null) {
+			this.cert = null;
+		} else {
+			throw new Error('Peach Properties security.cert must be a string or null');
+		}
+
+		if (typeof key === 'string') {
+			this.key = key;
+		} else if (key == null) {
+			this.key = null;
+		} else {
+			throw new Error('Peach Properties security.key must be a string or null');
+		}
+
+	}
+
+}
+
+export class PeachProperties {
+
+	constructor({
+		server,
+		databases,
+		security
+	}) {
+		this.server = new PeachServerProperties(server ?? {});
+		if (databases == null) {
+			databases = [];
+		}
+		if (!Array.isArray(databases)) {
+			throw new Error('Peach Properties databases must be an array or null');
+		}
+		this.databases = databases.map(x => new PeachDatabaseProperties(x ?? {}));
+		this.security = new PeachSecurityProperties(security ?? {});
+	}
+
+}
+
+export class PeachServer {
 
 	constructor(properties) {
 
-		this.cert = undefined;
-		this.key = undefined;
+		this._cert = null;
+		this._key = null;
+		this._dbpools = null;
 
 		if (typeof properties === 'string') {
-			try {
-				properties = JSON.parse(fs.readFileSync(this.path, 'utf8'));
-			} catch(err) {
-				throw new Error('Could not read properties file during refresh');
-			}
 			properties = JSON.parse(fs.readFileSync(properties, {encoding: 'utf-8'}));
 		}
-
-		this.properties = properties;
-
-		/** @type {PostgresPool[]} */
-		this.dbPools = [];
-
-		if (this.properties == null) {
-			throw new Error('No properties file was provided');
-		}
-
-		if (Array.isArray(this.properties.databases)) {
-
-			this.properties.databases.forEach((dataBaseProperties) => {
-
-				const postgresOptions = {
-					user: dataBaseProperties.username,
-					password: dataBaseProperties.password,
-					host: dataBaseProperties.host,
-					database: dataBaseProperties.name,
-					port: dataBaseProperties.port
-				};
-
-				if (dataBaseProperties.usessl) {
-					postgresOptions.ssl = {
-						rejectUnauthorized: false,
-						key: this.getKey(),
-						cert: this.getCert()
-					};
-				}
-
-				this.dbPools.push(new PostgresPool(postgresOptions));
-
-			});
-
-		}
+		this.properties = new PeachProperties(properties);
 
 	}
 
-	getCert () {
-		if (this.cert === undefined) {
-			if (this.properties.security == null || this.properties.security.cert == null) {
-				throw new Error('No cert file path was provided');
-			}
-			try {
-				this.cert = fs.readFileSync(this.properties.security.cert, 'utf8');
-			} catch (err) {
-				throw new Error('Could not read the cert file, an error occurred');
-			}
+	/**
+	 * Get the database pools as specified in the properties
+	 * @returns {Promise<pg.Pool[]>}
+	 */
+	async getDbPools() {
+		if (this._dbpools != null) {
+			return this._dbpools;
 		}
-		return this.cert;
+		return await Promise.all(this.properties.databases.map(async x =>  new pg.Pool({
+			user: x.username,
+			password: x.password,
+			host: x.host,
+			database: x.name,
+			port: x.port,
+			ssl: !x.usessl ? undefined : {
+				rejectUnauthorized: false,
+				cert: await this.getCert(),
+				key: await this.getKey()
+			}
+		})));
 	}
 
-	getKey () {
-		if (this.key === undefined) {
-			if (this.properties.security == null || this.properties.security.key == null) {
-				throw new Error('No key file path was provided');
-			}
-			try {
-				this.key = fs.readFileSync(this.properties.security.key, 'utf8');
-			} catch (err) {
-				throw new Error('Could not read the key file, an error occurred');
-			}
+	/**
+	 * Get the database pools as specified in the properties
+	 * @returns {pg.Pool[]}
+	 */
+	getDbPoolsSync() {
+		if (this._dbpools != null) {
+			return this._dbpools;
 		}
-		return this.key;
+		return this.properties.databases.map(x =>  new pg.Pool({
+			user: x.username,
+			password: x.password,
+			host: x.host,
+			database: x.name,
+			port: x.port,
+			ssl: !x.usessl ? undefined : {
+				rejectUnauthorized: false,
+				cert: this.getCertSync(),
+				key: this.getKeySync()
+			}
+		}));
 	}
 
+	/**
+	 * Get the certificate file for the server
+	 * @returns {Promise<Buffer>}
+	 */
+	async getCert() {
+		if (this._cert == null) {
+			if (this.properties.security.cert == null) {
+				throw new Error('No cert file path was provided in Peach properties file');
+			}
+			this._cert = await fs.promises.readFile(this.properties.security.cert);
+		}
+		return this._cert;
+	}
+
+	/**
+	 * Get the cert file for the server
+	 * @returns {Buffer}
+	 */
+	getCertSync() {
+		if (this._cert == null) {
+			if (this.properties.security.cert == null) {
+				throw new Error('No cert file path was provided in Peach properties file');
+			}
+			this._cert = fs.readFileSync(this.properties.security.cert);
+		}
+		return this._cert;
+	}
+
+	/**
+	 * Get the key file for the server
+	 * @returns {Promise<Buffer>}
+	 */
+	async getKey() {
+		if (this._key == null) {
+			if (this.properties.security.key == null) {
+				throw new Error('No key file path was provided in Peach properties file');
+			}
+			this._key = await fs.promises.readFile(this.properties.security.key);
+		}
+		return this._key;
+	}
+
+	/**
+	 * Get the key file for the server
+	 * @returns {Buffer}
+	 */
+	getKeySync() {
+		if (this._key == null) {
+			if (this.properties.security.key == null) {
+				throw new Error('No key file path was provided in Peach properties file');
+			}
+			this._key = fs.readFileSync(this.properties.security.key);
+		}
+		return this._key;
+	}
+
+	/**
+	 * Get information about the request to pass to the request listener
+	 * @param {http.IncomingMessage} req HTTP request object
+	 */
 	getRequestInfo(req) {
 
-		const acceptedHosts = Array.isArray(this.properties.server.acceptedhosts) ? this.properties.server.acceptedhosts : [];
+		const acceptedHosts = this.properties.server.acceptedhosts;
 
 		const proxyIsUsed = this.properties.server.trustedproxiessetxforwardedheaders && req.headers['x-proxy-secret'] != null && req.headers['x-proxy-secret'] === this.properties.server.xproxysecret;
 
+		/** @type {"http"|"https"} */
 		const proto = proxyIsUsed ? req.headers['x-forwarded-proto'] : (req.connection.encrypted ? 'https' : 'http');
+		if (proto !== 'https' && proto !== 'http') {
+			throw new PeachError(400, `An unrecognised protocol "${proto}" was used`);
+		}
 
-		const rawHost = proxyIsUsed ? req.headers['x-forwarded-host'] : req.headers['host'];
-		const host = acceptedHosts.includes(rawHost) ? rawHost : (acceptedHosts[0] || '');
+		/** @type {string} */
+		const host = proxyIsUsed ? req.headers['x-forwarded-host'] : req.headers['host'];
+		if (acceptedHosts != null && !acceptedHosts.includes(host)) {
+			throw new PeachError(400, `An unsupported host "${host}" was used`);
+		}
 
-		const origin = (host && proto) ? `${proto}://${host}` : (typeof this.properties.server.defaultorigin === 'string' ? this.properties.server.defaultorigin : '');
+		const origin = proto + '://' + host;
 
 		let adjustedurl;
 		let basepath;
-		let basepaths = this.properties.server.basepaths;
-		if (Array.isArray(basepaths)) {
+		const basepaths = this.properties.server.basepaths;
+		if (basepaths == null) {
+			basepath = '';
+			adjustedurl = req.url;
+		} else {
 			for (const testbasepath of basepaths) {
 				if (req.url.startsWith(testbasepath)) {
 					basepath = testbasepath;
@@ -144,18 +401,11 @@ class PeachServer {
 				}
 			}
 			if (adjustedurl == null) {
-				throw new PeachError(500, 'Request did not have an expected string at the beginning of the URL');
+				throw new PeachError(400, 'Request did not have an expected string at the beginning of the URL');
 			}
-		} else if (basepaths == null) {
-			basepath = '';
-			adjustedurl = req.url;
-		} else {
-			throw new PeachError(500, 'Improperly configured server for server.basepaths property');
 		}
 
 		const requrl = url.parse(`${origin}${adjustedurl}`, true);
-
-		requrl.origin = requrl.protocol && requrl.host ? `${requrl.protocol}//${requrl.host}` : null;
 
 		return {
 			requrl,
@@ -168,17 +418,16 @@ class PeachServer {
 	/**
 	 * Start a new server with the requested options
 	 * @param {object} input Input object containing information to create the server
-	 * @param {(req: http.IncomingMessage, res: http.ServerResponse, requrl: url.UrlWithParsedQuery, basepath: string, ip: string, cookies: Cookies) => Promise<any>} input.requestListener The text that should be synthesised in speech
+	 * @param {(req: http.IncomingMessage, res: http.ServerResponse, requrl: url.UrlWithParsedQuery, basepath: string, ip: string, cookies: Cookies) => Promise<any>} input.requestListener The function that gets called whenever a new request is received
 	 * @param {number} input.incrementPort The number to increment the port number by as specified in the properties file
 	 * @param {string|null} input.authenticateMethod If a 401 or 403 error is thrown from inside the requestListener then this parameter to notify the user what authentication method they should perform
 	 * @param {object|null} input.websocketData Data relating to the websocket server to be created
-	 * @returns {void}
 	 */
 	start({
 		requestListener,
-		errorListener = null,
 		authenticateMethod = 'Basic',
 		incrementPort = 0,
+		allowAllCors = true,
 		websocketData = null
 	}) {
 
@@ -186,18 +435,23 @@ class PeachServer {
 			throw new Error('A requestListener function must be passed');
 		}
 
+		/**
+		 * @param {http.IncomingMessage} req 
+		 * @param {http.ServerResponse} res 
+		 */
 		const baseRequestListener = async (req, res) => {
 
-			if (req.method === 'OPTIONS') {
-				res.writeHead(200, {
-					'Access-Control-Allow-Origin': '*',
-					'Access-Control-Allow-Headers': req.headers['access-control-request-headers']
-				});
-				res.end();
-				return;
-			}
+			let status, data, doStream = false, clientresponsibleforclosingres = false, headers = {};
 
-			let code = 200, data = '', contentType = 'text/plain', headers = {'Access-Control-Allow-Origin': '*'}, preventAutoResEnd = false;
+			if (allowAllCors) {
+				headers['Access-Control-Allow-Origin'] = '*';
+				if (req.method === 'OPTIONS') {
+					headers['Access-Control-Allow-Headers'] = req.headers['access-control-request-headers'];
+					res.writeHead(204, headers);
+					res.end();
+					return;
+				}
+			}
 
 			try {
 
@@ -214,137 +468,154 @@ class PeachServer {
 					})
 				});
 
-				if (res._header == null) {
+				if (res._header != null) {
+					return;
+				}
 
-					if (output instanceof PeachOutput) {
-						code = output.code || code;
-						contentType = output.contentType || contentType;
-						data = output.data || data;
-					} else if (output === '' || output == null) {
-						code = 204;
-					} else if (typeof output === 'object') {
-						if (output instanceof stream.Readable || output instanceof stream.Transform) {
-							data = output;
-						} else if (output instanceof Buffer) {
-							data = output;
-							contentType = 'text/html';
-						} else {
-							data = JSON.stringify(output);
-							contentType = 'application/json';
+				if (output instanceof PeachOutput) {
+					status = output.status;
+					Object.assign(headers, output.headers);
+					data = output.data;
+				} else if (output instanceof PeachFile) {
+					status = output.status;
+					Object.assign(headers, output.headers);
+					const absFolderPath = path.resolve(output.folder);
+					const fullPath = path.join(absFolderPath, output.file);
+					if (fullPath !== absFolderPath + path.sep + output.file) {
+						throw new PeachError(404, 'Stop trying to snoop by traversing, eh?');
+					}
+					if (output.replacements == null) {
+						try {
+							await fs.promises.access(fullPath);
+						} catch (err) {
+							if (err.code === 'ENOENT') {
+								throw new PeachError(404, 'Not found');
+							} else {
+								throw err;
+							}
 						}
-					} else if (typeof output === 'string') {
-						data = output;
-						contentType = 'text/html';
+						data = fs.createReadStream(fullPath, {encoding: output.encoding ?? 'utf-8'});
+						data.on('error', (err) => {
+							console.error('Error while streaming PeachFile:', err);
+						});
 					} else {
-						throw new PeachError(500, 'Unknown output type of request listener');
-					}
-
-					if (typeof contentType === 'string') {
-						headers['Content-Type'] = contentType;
-					}
-
-					try {
-						res.writeHead(code, headers);
-					} catch(err) {
-					}
-
-					try {
-						if (data instanceof stream.Readable || data instanceof stream.Transform) {
-							data.pipe(res);
-							preventAutoResEnd = true;
-						} else {
-							res.write(data);
+						try {
+							data = await fs.promises.readFile(fullPath, {encoding: output.encoding ?? 'utf-8'});
+						} catch (err) {
+							if (err.code === 'ENOENT') {
+								throw new PeachError(404, 'Not found');
+							} else {
+								throw err;
+							}
 						}
-					} catch(err) {
-						1 + 1;
+						for (const {search, replace} of output.replacements) {
+							data = data.replace(search, replace);
+						}
 					}
+					if (!headers['Content-Type']) {
+						const contentType = this.constructor.getContentType(fullPath);
+						if (contentType != null) {
+							headers['Content-Type'] = contentType;
+						}
+					}
+				} else {
+					data = output;
+				}
 
+				if (typeof status !== 'number') {
+					status = data == null ? 204 : 200;
+				}
+
+				if (data == null) {
+					data = '';
+				} else if (data instanceof stream.Readable || data instanceof stream.Transform) {
+					doStream = true;
+				} else if (typeof data === 'object') {
+					data = JSON.stringify(data);
+					if (!headers['Content-Type']) {
+						headers['Content-Type'] = 'application/json';
+					}
 				}
 
 			} catch(err) {
 
+				status = 500;
+
 				console.error(err);
-				code = 500;
+
+				let errorcode, message;
 
 				if (err instanceof PeachError) {
 					if (Number.isInteger(err.status)) {
-						code = err.status;
-						if ((code === 401 || code === 403) && typeof authenticateMethod === 'string') {
-							headers['WWW-Authenticate'] = authenticateMethod;
-						}
+						status = err.status;
 					}
-					data = err.message;
-				}
-
-				if (typeof errorListener === 'function') {
-
-					const errorListenerOutput = await errorListener(req, err);
-
-					if (errorListenerOutput.code != null) {
-						code = errorListenerOutput.code;
-					}
-					if (errorListenerOutput.data != null) {
-						data = errorListenerOutput.data;
-					}
-					if (errorListenerOutput.contentType != null) {
-						contentType = errorListenerOutput.contentType;
-					}
-					if (errorListenerOutput.headers != null) {
-						for (const headerName in errorListenerOutput.headers) {
-							headers[headerName] = errorListenerOutput.headers[headerName]
-						}
-					}
-
-					PeachServer.returnData(res, code, contentType, data, headers);
-
-				} else if (errorListener != null && typeof errorListener === 'object' && errorListener[code] != null) {
-
-					try {
-						PeachServer.returnFile(res, code, errorListener[code], headers);
-					} catch (err) {
-						PeachServer.returnData(res, code, 'text/plain', `${code} caught error\n\n${data}`, headers);
-					}
-
+					message = err.message;
+					errorcode = err.errorcode;
+					Object.assign(headers, err.headers);
+				} else if (err instanceof Error) {
+					message = err.message;
 				} else {
-
-					PeachServer.returnData(res, code, 'text/plain', `${code} error\n\n${data}`, headers);
-
+					message = 'An error occurred whilst processing your request'
 				}
+
+				if (errorcode == null) {
+					errorcode = null;
+				}
+
+				if (!headers['WWW-Authenticate'] && typeof authenticateMethod === 'string' && [401, 403].includes(status)) {
+					headers['WWW-Authenticate'] = authenticateMethod;
+				}
+
+				if (status < 400 || status >= 500) {
+					message = null;
+				}
+
+				headers['Content-Type'] = 'application/json';
+				data = JSON.stringify({status, errorcode, message});
+				doStream = false;
 
 			} finally {
 
-				if (!preventAutoResEnd) {
-					res.end();
+				if (status >= 300 && status < 400) {
+					if (!headers['Location']) {
+						headers['Location'] = data;
+					}
+					data = '';
+					doStream = false;
+				}
+
+				try {
+					res.writeHead(status, headers);
+					if (doStream) {
+						data.pipe(res);
+						clientresponsibleforclosingres = true;
+					} else {
+						res.write(data);
+					}
+				} catch (err) {
+					console.error('PeachServer error while writing to res:', err);
+				} finally {
+					if (!clientresponsibleforclosingres) {
+						res.end();
+					}
 				}
 
 			}
 
 		};
 
-		if (this.properties.server == null) {
-			throw new Error('Server object in properties cannot be null');
-		}
-
-		if (!Number.isInteger(this.properties.server.port)) {
-			throw new Error('Server port value in properties must be an integer');
-		}
-
 		let server;
 
 		if (this.properties.server.usessl) {
 
-			const https = require('https');
-
 			server = https.createServer({
-				key: this.getKey(),
-				cert: this.getCert()
+				cert: this.getCertSync(),
+				key: this.getKeySync()
 			}, baseRequestListener);
 
 			server.listen(this.properties.server.port + incrementPort, '::');
 
 		} else {
-
-			const http = require('http');
 
 			server = http.createServer(baseRequestListener);
 
@@ -363,7 +634,7 @@ class PeachServer {
 				}
 
 				const terminate = () => {
-					websocket.terminate(message);
+					websocket.terminate();
 				}
 
 				const handleError = (err) => {
@@ -394,6 +665,7 @@ class PeachServer {
 				if (typeof websocketData.onconnection === 'function') {
 					websocketData.onconnection({
 						req,
+						websocket,
 						sendMessage,
 						terminate,
 						handleError,
@@ -432,6 +704,9 @@ class PeachServer {
 
 	static getContentType(fileName) {
 		const splitFileName = fileName.split('.');
+		if (splitFileName.length === 1) {
+			return;
+		}
 		const extension = splitFileName[splitFileName.length - 1];
 		switch(extension) {
 			case 'html':
@@ -452,53 +727,14 @@ class PeachServer {
 			return 'image/gif';
 			case 'txt':
 			return 'text/plain';
+			case 'mp4':
+			return 'video/mp4';
 			case 'woff2':
 			return 'font/woff2';
 			case 'apng':
 			return 'image/vnd.mozilla.apng';
 		}
 		console.error(`Unknown content type for "${extension}"`);
-		return 'text/plain';
-	}
-
-	static returnData(res, code, contentType, data, headers = {}) {
-		headers['Content-Type'] = contentType;
-		headers['Access-Control-Allow-Origin'] = '*';
-		res.writeHead(code, headers);
-		res.write(data);
-	}
-
-	static getFile(folderPath, fileName, replacements) {
-		let data;
-		const folderPathTrailing = path.join(folderPath, path.sep)
-		const fullPath = path.join(folderPathTrailing, fileName);
-		if (fullPath !== folderPathTrailing + fileName) {
-			throw new PeachError(404, 'Stop trying to snoop by traversing, eh?');
-		}
-		try {
-			data = fs.readFileSync(fullPath);
-		} catch (err) {
-			throw new PeachError(404, `File not found: ${fullPath}`);
-		}
-		if (replacements == null) {
-			return data;
-		}
-		data = data.toString('utf8');
-		data = PeachServer.stringReplacements(data, replacements)
-		return Buffer.from(data);
-	}
-
-	static stringReplacements(data, replacements) {
-		for (const key in replacements) {
-			data = data.replace(`{{${key}}}`, replacements[key]);
-		}
-		return data;
-	}
-
-	static returnFile(res, code, folderPath, fileName, headers = {}, replacements = undefined) {
-		const contentType = PeachServer.getContentType(fileName, true);
-		const data = PeachServer.getFile(folderPath, fileName, replacements);
-		PeachServer.returnData(res, code, contentType, data, headers);
 	}
 
 	static assertPathLength(pathArray, length) {
@@ -539,7 +775,3 @@ class PeachServer {
 	}
 
 }
-
-module.exports.PeachServer = PeachServer;
-module.exports.PeachError = PeachError;
-module.exports.PeachOutput = PeachOutput;
