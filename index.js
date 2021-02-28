@@ -4,6 +4,7 @@ import Cookies from 'cookies';
 import path from 'path';
 import url from 'url';
 import fs from 'fs';
+import qs from 'qs';
 import stream from 'stream';
 import http from 'http';
 import https from 'https';
@@ -253,7 +254,7 @@ export class PeachServer {
 
 		this._cert = null;
 		this._key = null;
-		this._dbpools = null;
+		//this._dbpools = null;
 
 		if (typeof properties === 'string') {
 			properties = JSON.parse(fs.readFileSync(properties, {encoding: 'utf-8'}));
@@ -267,21 +268,21 @@ export class PeachServer {
 	 * @returns {Promise<pg.Pool[]>}
 	 */
 	async getDbPools() {
-		if (this._dbpools != null) {
-			return this._dbpools;
+		if (this._dbpools == null) {
+			this._dbpools = await Promise.all(this.properties.databases.map(async x =>  new pg.Pool({
+				user: x.username,
+				password: x.password,
+				host: x.host,
+				database: x.name,
+				port: x.port,
+				ssl: !x.usessl ? undefined : {
+					rejectUnauthorized: false,
+					cert: await this.getCert(),
+					key: await this.getKey()
+				}
+			})));
 		}
-		return await Promise.all(this.properties.databases.map(async x =>  new pg.Pool({
-			user: x.username,
-			password: x.password,
-			host: x.host,
-			database: x.name,
-			port: x.port,
-			ssl: !x.usessl ? undefined : {
-				rejectUnauthorized: false,
-				cert: await this.getCert(),
-				key: await this.getKey()
-			}
-		})));
+		return this._dbpools;
 	}
 
 	/**
@@ -289,21 +290,21 @@ export class PeachServer {
 	 * @returns {pg.Pool[]}
 	 */
 	getDbPoolsSync() {
-		if (this._dbpools != null) {
-			return this._dbpools;
+		if (this._dbpools == null) {
+			return this.properties.databases.map(x =>  new pg.Pool({
+				user: x.username,
+				password: x.password,
+				host: x.host,
+				database: x.name,
+				port: x.port,
+				ssl: !x.usessl ? undefined : {
+					rejectUnauthorized: false,
+					cert: this.getCertSync(),
+					key: this.getKeySync()
+				}
+			}));
 		}
-		return this.properties.databases.map(x =>  new pg.Pool({
-			user: x.username,
-			password: x.password,
-			host: x.host,
-			database: x.name,
-			port: x.port,
-			ssl: !x.usessl ? undefined : {
-				rejectUnauthorized: false,
-				cert: this.getCertSync(),
-				key: this.getKeySync()
-			}
-		}));
+		return this._dbpools;
 	}
 
 	/**
@@ -446,7 +447,9 @@ export class PeachServer {
 			if (allowAllCors) {
 				headers['Access-Control-Allow-Origin'] = '*';
 				if (req.method === 'OPTIONS') {
-					headers['Access-Control-Allow-Headers'] = req.headers['access-control-request-headers'];
+					if (req.headers['access-control-request-headers']) {
+						headers['Access-Control-Allow-Headers'] = req.headers['access-control-request-headers'];
+					}
 					res.writeHead(204, headers);
 					res.end();
 					return;
@@ -468,10 +471,12 @@ export class PeachServer {
 					})
 				});
 
+				// If a header has already been written
 				if (res._header != null) {
 					return;
 				}
 
+				// Extract the information from PeachOutput and PeachFile
 				if (output instanceof PeachOutput) {
 					status = output.status;
 					Object.assign(headers, output.headers);
@@ -494,9 +499,10 @@ export class PeachServer {
 								throw err;
 							}
 						}
-						data = fs.createReadStream(fullPath, {encoding: output.encoding ?? 'utf-8'});
+						data = fs.createReadStream(fullPath, {encoding: output.encoding ?? undefined});
 						data.on('error', (err) => {
 							console.error('Error while streaming PeachFile:', err);
+							data.close();
 						});
 					} else {
 						try {
@@ -522,10 +528,12 @@ export class PeachServer {
 					data = output;
 				}
 
+				// Set the status code (if not already)
 				if (typeof status !== 'number') {
 					status = data == null ? 204 : 200;
 				}
 
+				// Alter the data to to make it http-friendly
 				if (data == null) {
 					data = '';
 				} else if (data instanceof stream.Readable || data instanceof stream.Transform) {
@@ -602,7 +610,7 @@ export class PeachServer {
 
 			}
 
-		};
+		}
 
 		let server;
 
@@ -692,7 +700,7 @@ export class PeachServer {
 						websocket.terminate();
 					}
 				}
-			}, websocketData.pingPongTimeout || 30000);
+			}, websocketData.pingPongTimeout ?? 30000);
 
 			wsServer.on('close', () => {
 				clearInterval(pingponginterval);
@@ -753,17 +761,39 @@ export class PeachServer {
 	static getRequestData(req, options = {}) {
 		return new Promise((resolve, reject) => {
 			try {
+				const maxBodySize = options.maxBodySize ?? 10000000; 
 				let body = '';
+				let stoppedProcessing = false;
 				req.on('data', (data) => {
+					if (stoppedProcessing) {
+						return;
+					}
 					body += data;
+					if (body.length > maxBodySize) {
+						stoppedProcessing = true;
+						reject(new PeachError(413, 'Request body exceeded maximum length'));
+					}
 				});
 				req.on('end', () => {
+					if (stoppedProcessing) {
+						return;
+					}
 					if (options.json) {
-						try {
-							body = JSON.parse(body);
-						} catch(err) {
-							reject(new PeachError(400, `Expected JSON input: ${err.message}`));
-							return;
+						switch (req.headers['content-type']) {
+							case 'application/json':
+								try {
+									body = JSON.parse(body);
+								} catch(err) {
+									reject(new PeachError(400, err.message));
+									return;
+								}
+								break;
+							case 'application/x-www-form-urlencoded':
+								body = qs.parse(body);
+								break;
+							default:
+								reject(new PeachError(400, `Cannot parse content type "${req.headers['content-type']}"`));
+								return;
 						}
 					}
 					resolve(body);

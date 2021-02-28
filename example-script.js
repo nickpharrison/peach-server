@@ -3,7 +3,7 @@ import {PeachServer, PeachError, PeachOutput, PeachFile} from './index.js';
 
 const peachServer = new PeachServer('example-properties.json');
 
-const dbPool = (await peachServer.getDbPools())[0];
+const [dbPool] = await peachServer.getDbPools();
 const properties = peachServer.properties;
 
 peachServer.start({
