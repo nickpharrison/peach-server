@@ -1,5 +1,4 @@
 import pg from 'pg';
-import WebSocket from 'ws';
 import Cookies from 'cookies';
 import path from 'path';
 import url from 'url';
@@ -8,6 +7,8 @@ import qs from 'qs';
 import stream from 'stream';
 import http from 'http';
 import https from 'https';
+import WebSocket from 'ws';
+export { default as WebSocket } from 'ws';
 
 // Alter the query method on the pool and connection so that errors are handled with an actual readable stack trace to make debugging easier
 pg.Pool.prototype.actualQueryForPeachServer = pg.Pool.prototype.query;
@@ -419,10 +420,12 @@ export class PeachServer {
 	/**
 	 * Start a new server with the requested options
 	 * @param {object} input Input object containing information to create the server
-	 * @param {(req: http.IncomingMessage, res: http.ServerResponse, requrl: url.UrlWithParsedQuery, basepath: string, ip: string, cookies: Cookies) => Promise<any>} input.requestListener The function that gets called whenever a new request is received
+	 * @param {({req, res, requrl, basepath, ip, cookies}: {req: http.IncomingMessage, res: http.ServerResponse, requrl: url.UrlWithParsedQuery, basepath: string, ip: string, cookies: Cookies}) => Promise<any>} input.requestListener The function that gets called whenever a new request is received
 	 * @param {number} input.incrementPort The number to increment the port number by as specified in the properties file
 	 * @param {string|null} input.authenticateMethod If a 401 or 403 error is thrown from inside the requestListener then this parameter to notify the user what authentication method they should perform
-	 * @param {object|null} input.websocketData Data relating to the websocket server to be created
+	 * @param {object} input.websocketData Data relating to the websocket server to be created
+	 * @param {({req, websocket, sendMessage, terminate, handleError, requrl, basepath, ip, cookies}: {req: http.IncomingMessage, websocket: WebSocket, sendMessage: (type: string, content: any) => void, terminate: () => void, handleError: (err: any) => void, requrl: url.UrlWithParsedQuery, basepath: string, ip: string, cookies: Cookies}) => Promise<void>} input.websocketData.onConnection The function to be called on a websocket connection
+	 * @param {number} input.websocketData.pingPongTimeout The number of milliseconds to wait in the "ping pong loop" for detcting dead connections
 	 */
 	start({
 		requestListener,
@@ -646,12 +649,13 @@ export class PeachServer {
 				}
 
 				const handleError = (err) => {
+					console.error(err);
 					let content;
 					if (err instanceof PeachError) {
 						content = {
 							status: err.status,
 							message: err.message,
-							error_code: err.peachCode || null
+							error_code: err.errorcode ?? null
 						};
 					} else {
 						content = {
@@ -670,8 +674,8 @@ export class PeachServer {
 
 				const {requrl, basepath, ip} = this.getRequestInfo(req);
 
-				if (typeof websocketData.onconnection === 'function') {
-					websocketData.onconnection({
+				if (typeof websocketData.onConnection === 'function') {
+					websocketData.onConnection({
 						req,
 						websocket,
 						sendMessage,
@@ -724,6 +728,8 @@ export class PeachServer {
 			case 'json':
 			return 'application/json';
 			case 'js':
+			case 'mjs':
+			case 'cjs':
 			return 'application/javascript';
 			case 'ico':
 			case 'png':
