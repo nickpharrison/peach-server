@@ -577,12 +577,17 @@ export class PeachServer {
 					headers['WWW-Authenticate'] = authenticateMethod;
 				}
 
-				if (status < 400 || status >= 500) {
-					message = null;
+
+				if (status >= 300 && status < 400) {
+					data = message;
+				} else {
+					if (status < 400 || status >= 500) {
+						message = null;
+					}
+					headers['Content-Type'] = 'application/json';
+					data = JSON.stringify({status, errorcode, message});
 				}
 
-				headers['Content-Type'] = 'application/json';
-				data = JSON.stringify({status, errorcode, message});
 				doStream = false;
 
 			} finally {
@@ -638,7 +643,7 @@ export class PeachServer {
 
 			const wsServer = new WebSocket.Server({server});
 
-			wsServer.on('connection', async (websocket, req) => {
+			wsServer.on('connection', (websocket, req) => {
 
 				const sendMessage = (type, content) => {
 					websocket.send(JSON.stringify({type, content}));
@@ -675,22 +680,30 @@ export class PeachServer {
 				const {requrl, basepath, ip} = this.getRequestInfo(req);
 
 				if (typeof websocketData.onConnection === 'function') {
-					websocketData.onConnection({
-						req,
-						websocket,
-						sendMessage,
-						terminate,
-						handleError,
-						requrl,
-						basepath,
-						ip,
-						cookies: new Cookies(req, null, {
-							secure: !(requrl.protocol === 'http:' && requrl.hostname === 'localhost')
-						})
-					}).catch((err) => {
+					try {
+						const output = websocketData.onConnection({
+							req,
+							websocket,
+							sendMessage,
+							terminate,
+							handleError,
+							requrl,
+							basepath,
+							ip,
+							cookies: new Cookies(req, null, {
+								secure: !(requrl.protocol === 'http:' && requrl.hostname === 'localhost')
+							})
+						});
+						if (output instanceof Promise) {
+							output.catch((err) => {
+								handleError(err);
+								terminate();
+							});
+						}
+					} catch (err) {
 						handleError(err);
 						terminate();
-					});
+					}
 				}
 
 			});
