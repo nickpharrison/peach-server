@@ -91,6 +91,8 @@ export class PeachFile {
 
 }
 
+export const MANUAL_CLOSE = Symbol('PEACH_SYNC_MANUAL_CLOSE');
+
 class PeachServerProperties {
 
 	constructor({
@@ -473,6 +475,10 @@ export class PeachServer {
 						secure: !(requrl.protocol === 'http:' && requrl.hostname === 'localhost')
 					})
 				});
+
+				if (output === MANUAL_CLOSE) {
+					return;
+				}
 
 				// If a header has already been written
 				if (res._header != null) {
