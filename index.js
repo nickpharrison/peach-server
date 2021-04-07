@@ -30,6 +30,52 @@ pg.Connection.prototype.query = async function (...args) {
 	}
 }
 
+const stringToBoolean = (string, def = false) => {
+	if (typeof string !== 'string' || string === '') {
+		return Boolean(def);
+	}
+	return string.toLowerCase() === 'true'
+}
+
+const makePeachPropertiesFromEnv = (prefix) => {
+
+	const server = {
+		port: parseInt(process.env[prefix + '_PORT'], 10),
+		usessl: stringToBoolean(process.env[prefix + '_USESSL']),
+		acceptedhosts: !process.env[prefix + '_ACCEPTEDHOSTS'] ? null : process.env[prefix + '_ACCEPTEDHOSTS'].split(';'),
+		defaultorigin: process.env[prefix + '_DEFAULTORIGIN'],
+		basepaths: !process.env[prefix + '_BASEPATHS'] ? null : process.env[prefix + '_BASEPATHS'].split(';'),
+		xproxysecret: process.env[prefix + '_XPROXYSECRET'],
+		trustedproxiessetxforwardedheaders: process.env[prefix + '_TRUSTEDPROXIESSETXFORWARDEDHEADER'],
+	}
+
+	const databases = !process.env[prefix + '_DATABASES'] ? [] : process.env[prefix + '_DATABASES'].split(';').map((x) => {
+		const [username, password, host, name, port, usessl, extra] = x.split(',');
+		if (usessl == null) {
+			throw new Error(`Error parsing database env variables for prefix "${prefix}". Less than 6 parts were included.`);
+		}
+		if (extra != null) {
+			throw new Error(`Error parsing database env variables for prefix "${prefix}". More than 6 parts were included.`);
+		}
+		return {
+			username,
+			password,
+			host,
+			name,
+			port: parseInt(port, 10),
+			usessl: stringToBoolean(usessl)
+		}
+	});
+
+	const security = {
+		cert: process.env[prefix + '_CERT'],
+		key: process.env[prefix + '_CKEY'],
+	}
+
+	return {server, databases, security};
+
+}
+
 export class PeachError extends Error {
 
 	/**
@@ -90,8 +136,6 @@ export class PeachFile {
 	}
 
 }
-
-export const MANUAL_CLOSE = Symbol('PEACH_SYNC_MANUAL_CLOSE');
 
 class PeachServerProperties {
 
@@ -251,6 +295,8 @@ export class PeachProperties {
 
 }
 
+export const PeachManualClose = Symbol('PEACH_SYNC_MANUAL_CLOSE');
+
 export class PeachServer {
 
 	constructor(properties) {
@@ -260,7 +306,13 @@ export class PeachServer {
 		//this._dbpools = null;
 
 		if (typeof properties === 'string') {
-			properties = JSON.parse(fs.readFileSync(properties, {encoding: 'utf-8'}));
+			if (properties === 'env') {
+				properties = makePeachPropertiesFromEnv('PS');
+			} else if (properties.startsWith('env:')) {
+				properties = makePeachPropertiesFromEnv(properties.split(':')[1]);
+			} else {
+				properties = JSON.parse(fs.readFileSync(properties, {encoding: 'utf-8'}));
+			}
 		}
 		this.properties = new PeachProperties(properties);
 
@@ -447,7 +499,7 @@ export class PeachServer {
 		 */
 		const baseRequestListener = async (req, res) => {
 
-			let status, data, doStream = false, clientresponsibleforclosingres = false, headers = {};
+			let status, data, doStream = false, bypassFinally = false, clientresponsibleforclosingres = false, headers = {};
 
 			if (allowAllCors) {
 				headers['Access-Control-Allow-Origin'] = '*';
@@ -476,12 +528,14 @@ export class PeachServer {
 					})
 				});
 
-				if (output === MANUAL_CLOSE) {
+				if (output === PeachManualClose) {
+					bypassFinally = true;
 					return;
 				}
 
 				// If a header has already been written
 				if (res._header != null) {
+					bypassFinally = true;
 					return;
 				}
 
@@ -499,29 +553,15 @@ export class PeachServer {
 						throw new PeachError(404, 'Stop trying to snoop by traversing, eh?');
 					}
 					if (output.replacements == null) {
-						try {
-							await fs.promises.access(fullPath);
-						} catch (err) {
-							if (err.code === 'ENOENT') {
-								throw new PeachError(404, 'Not found');
-							} else {
-								throw err;
-							}
-						}
 						data = fs.createReadStream(fullPath, {encoding: output.encoding ?? undefined});
-						data.on('error', (err) => {
-							console.error('Error while streaming PeachFile:', err);
-							data.close();
-						});
 					} else {
 						try {
 							data = await fs.promises.readFile(fullPath, {encoding: output.encoding ?? 'utf-8'});
 						} catch (err) {
 							if (err.code === 'ENOENT') {
 								throw new PeachError(404, 'Not found');
-							} else {
-								throw err;
 							}
+							throw err;
 						}
 						for (const {search, replace} of output.replacements) {
 							data = data.replace(search, replace);
@@ -598,28 +638,45 @@ export class PeachServer {
 
 			} finally {
 
-				if (status >= 300 && status < 400) {
-					if (!headers['Location']) {
-						headers['Location'] = data;
-					}
-					data = '';
-					doStream = false;
-				}
+				if (!bypassFinally) {
 
-				try {
-					res.writeHead(status, headers);
-					if (doStream) {
-						data.pipe(res);
-						clientresponsibleforclosingres = true;
-					} else {
-						res.write(data);
+					if (status >= 300 && status < 400) {
+						if (!headers['Location']) {
+							headers['Location'] = data;
+						}
+						data = '';
+						doStream = false;
 					}
-				} catch (err) {
-					console.error('PeachServer error while writing to res:', err);
-				} finally {
-					if (!clientresponsibleforclosingres) {
-						res.end();
+	
+					try {
+						if (doStream) {
+							clientresponsibleforclosingres = true;
+							if (data instanceof fs.ReadStream) {
+								data.on('open', () => {
+									res.writeHead(status, headers);
+									data.pipe(res);
+								});
+								data.on('error', () => {
+									headers['Content-Type'] = 'application/json';
+									res.writeHead(404, headers);
+									res.write(JSON.stringify({status: 404, errorcode: 99264, message: 'Not found'}));
+								});
+							} else {
+								res.writeHead(status, headers);
+								data.pipe(res);
+							}
+						} else {
+							res.writeHead(status, headers);
+							res.write(data);
+						}
+					} catch (err) {
+						console.error('PeachServer error while writing to res:', err);
+					} finally {
+						if (!clientresponsibleforclosingres) {
+							res.end();
+						}
 					}
+	
 				}
 
 			}
