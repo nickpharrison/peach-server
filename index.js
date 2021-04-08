@@ -30,7 +30,7 @@ pg.Connection.prototype.query = async function (...args) {
 	}
 }
 
-const stringToBoolean = (string, def = false) => {
+const stringToBoolean = (string, def = undefined) => {
 	if (typeof string !== 'string' || string === '') {
 		return Boolean(def);
 	}
@@ -46,7 +46,7 @@ const makePeachPropertiesFromEnv = (prefix) => {
 		defaultorigin: process.env[prefix + '_DEFAULTORIGIN'],
 		basepaths: !process.env[prefix + '_BASEPATHS'] ? null : process.env[prefix + '_BASEPATHS'].split(';'),
 		xproxysecret: process.env[prefix + '_XPROXYSECRET'],
-		trustedproxiessetxforwardedheaders: process.env[prefix + '_TRUSTEDPROXIESSETXFORWARDEDHEADER'],
+		trustedproxiessetxforwardedheaders: stringToBoolean(process.env[prefix + '_TRUSTEDPROXIESSETXFORWARDEDHEADER']),
 	}
 
 	const databases = !process.env[prefix + '_DATABASES'] ? [] : process.env[prefix + '_DATABASES'].split(';').map((x) => {
@@ -184,10 +184,13 @@ class PeachServerProperties {
 			throw new Error('Peach Properties server.acceptedhosts must be an array or null');
 		}
 
-		if (typeof trustedproxiessetxforwardedheaders !== 'boolean') {
+		if (trustedproxiessetxforwardedheaders == null) {
+			this.trustedproxiessetxforwardedheaders = false;
+		} else if (typeof trustedproxiessetxforwardedheaders === 'boolean') {
+			this.trustedproxiessetxforwardedheaders = trustedproxiessetxforwardedheaders;
+		} else {
 			throw new Error('Peach Properties server.trustedproxiessetxforwardedheaders must be a boolean');
 		}
-		this.trustedproxiessetxforwardedheaders = trustedproxiessetxforwardedheaders;
 
 		if (typeof xproxysecret === 'string') {
 			this.xproxysecret = xproxysecret;
