@@ -47,6 +47,7 @@ const makePeachPropertiesFromEnv = (prefix) => {
 		basepaths: !process.env[prefix + '_BASEPATHS'] ? null : process.env[prefix + '_BASEPATHS'].split(';'),
 		xproxysecret: process.env[prefix + '_XPROXYSECRET'],
 		trustedproxiessetxforwardedheaders: stringToBoolean(process.env[prefix + '_TRUSTEDPROXIESSETXFORWARDEDHEADER']),
+		listenonlocalhostonly: stringToBoolean(process.env[prefix + '_LISTENONLOCALHOSTONLY']),
 		listenonipv4only: stringToBoolean(process.env[prefix + '_LISTENONIPV4ONLY']),
 	}
 
@@ -147,6 +148,7 @@ class PeachServerProperties {
 		acceptedhosts,
 		trustedproxiessetxforwardedheaders,
 		xproxysecret,
+		listenonlocalhostonly,
 		listenonipv4only
 	}) {
 
@@ -202,6 +204,14 @@ class PeachServerProperties {
 			throw new Error('Peach Properties server.xproxysecret must be a string if server.trustedproxiessetxforwardedheaders is true');
 		} else {
 			this.xproxysecret = null;
+		}
+
+		if (listenonlocalhostonly == null) {
+			this.listenonlocalhostonly = !this.usessl;
+		} else if (typeof listenonlocalhostonly === 'boolean') {
+			this.listenonlocalhostonly = listenonlocalhostonly;
+		} else {
+			throw new Error('Peach Properties server.listenonlocalhostonly must be a boolean');
 		}
 
 		if (listenonipv4only == null) {
@@ -697,27 +707,23 @@ export class PeachServer {
 		}
 
 		let server;
-
 		if (this.properties.server.usessl) {
-
 			server = https.createServer({
 				cert: this.getCertSync(),
 				key: this.getKeySync()
 			}, baseRequestListener);
-
-			const listenon = this.properties.listenonipv4only ? '0.0.0.0' : '::';
-
-			server.listen(this.properties.server.port + incrementPort, listenon);
-
 		} else {
-
 			server = http.createServer(baseRequestListener);
-
-			const listenon = this.properties.listenonipv4only ? '127.0.0.1' : '::1';
-
-			server.listen(this.properties.server.port + incrementPort, listenon);
-
 		}
+
+		let listenon;
+		if (this.properties.server.listenonlocalhostonly) {
+			listenon = this.properties.server.listenonipv4only ? '127.0.0.1' : '::1';
+		} else {
+			listenon = this.properties.server.listenonipv4only ? '0.0.0.0' : '::';
+		}
+
+		server.listen(this.properties.server.port + incrementPort, listenon);
 
 		if (typeof websocketData === 'object' && websocketData != null) {
 
