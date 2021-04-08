@@ -47,6 +47,7 @@ const makePeachPropertiesFromEnv = (prefix) => {
 		basepaths: !process.env[prefix + '_BASEPATHS'] ? null : process.env[prefix + '_BASEPATHS'].split(';'),
 		xproxysecret: process.env[prefix + '_XPROXYSECRET'],
 		trustedproxiessetxforwardedheaders: stringToBoolean(process.env[prefix + '_TRUSTEDPROXIESSETXFORWARDEDHEADER']),
+		listenonipv4only: stringToBoolean(process.env[prefix + '_LISTENONIPV4ONLY']),
 	}
 
 	const databases = !process.env[prefix + '_DATABASES'] ? [] : process.env[prefix + '_DATABASES'].split(';').map((x) => {
@@ -145,7 +146,8 @@ class PeachServerProperties {
 		basepaths,
 		acceptedhosts,
 		trustedproxiessetxforwardedheaders,
-		xproxysecret
+		xproxysecret,
+		listenonipv4only
 	}) {
 
 		if (typeof port !== 'number' || !Number.isInteger(port) || port < 1) {
@@ -200,6 +202,14 @@ class PeachServerProperties {
 			throw new Error('Peach Properties server.xproxysecret must be a string if server.trustedproxiessetxforwardedheaders is true');
 		} else {
 			this.xproxysecret = null;
+		}
+
+		if (listenonipv4only == null) {
+			this.listenonipv4only = false;
+		} else if (typeof listenonipv4only === 'boolean') {
+			this.listenonipv4only = listenonipv4only;
+		} else {
+			throw new Error('Peach Properties server.listenonipv4only must be a boolean');
 		}
 
 	}
@@ -695,13 +705,17 @@ export class PeachServer {
 				key: this.getKeySync()
 			}, baseRequestListener);
 
-			server.listen(this.properties.server.port + incrementPort, '::');
+			const listenon = this.properties.listenonipv4only ? '0.0.0.0' : '::';
+
+			server.listen(this.properties.server.port + incrementPort, listenon);
 
 		} else {
 
 			server = http.createServer(baseRequestListener);
 
-			server.listen(this.properties.server.port + incrementPort, '::1');
+			const listenon = this.properties.listenonipv4only ? '127.0.0.1' : '::1';
+
+			server.listen(this.properties.server.port + incrementPort, listenon);
 
 		}
 
