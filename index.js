@@ -1,4 +1,5 @@
 import pg from 'pg';
+import mime from 'mime';
 import Cookies from 'cookies';
 import path from 'path';
 import url from 'url';
@@ -29,6 +30,8 @@ pg.Connection.prototype.query = async function (...args) {
 		throw err;
 	}
 }
+
+mime.define({'image/vnd.mozilla.apng': ['apng']}, true);
 
 const stringToBoolean = (string, def = undefined) => {
 	if (typeof string !== 'string' || string === '') {
@@ -813,49 +816,37 @@ export class PeachServer {
 
 	}
 
-	static getContentType(fileName) {
-		const splitFileName = fileName.split('.');
-		if (splitFileName.length === 1) {
-			return;
+	/**
+	 * Return the content type of a file
+	 * @param {string} string A file name/path/extension to get the content type of
+	 * @returns {string} The MIME Content Type of the related file
+	 */
+	static getContentType(string) {
+		const contentType = mime.getType(string);
+		if (contentType) {
+			return contentType;
 		}
-		const extension = splitFileName[splitFileName.length - 1];
-		switch(extension) {
-			case 'html':
-			return 'text/html';
-			case 'css':
-			return 'text/css';
-			case 'json':
-			return 'application/json';
-			case 'js':
-			case 'mjs':
-			case 'cjs':
-			return 'application/javascript';
-			case 'ico':
-			case 'png':
-			return 'image/png';
-			case 'jpg':
-			case 'jpeg':
-			return 'image/jpeg';
-			case 'gif':
-			return 'image/gif';
-			case 'txt':
-			return 'text/plain';
-			case 'mp4':
-			return 'video/mp4';
-			case 'woff2':
-			return 'font/woff2';
-			case 'apng':
-			return 'image/vnd.mozilla.apng';
-		}
-		console.error(`Unknown content type for "${extension}"`);
+		console.log(`No content type could be determined for "${string}"`);
 	}
 
+	/**
+	 * Throw a 404 error if the path of a request has too many or too few parts
+	 * @param {string[]} pathArray The path array of the request
+	 * @param {number} length The expected number of objects in the path array
+	 * @returns {void}
+	 */
 	static assertPathLength(pathArray, length) {
 		if (pathArray.length !== length) {
 			throw new PeachError(404, 'Not Found: /' + pathArray.join('/'));
 		}
 	}
 
+	/**
+	 * Throw a 405 error if the method of a HTTP request is not allowed
+	 * @param {http.IncomingMessage} req The http request object
+	 * @param {string[]} methods A list of acceptable methods to allow
+	 * @returns {string} The method of the request
+	 */
 	static assertMethod(req, methods) {
 		if (methods.includes(req.method)) {
 			return req.method;
@@ -863,6 +854,14 @@ export class PeachServer {
 		throw new PeachError(405, 'Invalid Verb');
 	}
 
+	/**
+	 * Return (and wait for) the body of a request
+	 * @param {http.IncomingMessage} req The http request object
+	 * @param {object} options Options
+	 * @param {number} options.maxBodySize The maximum body size (in bytes) to accept before throwing a 413 (default 10000000)
+	 * @param {boolean} options.json Whether to parse the body of the response into an object and resolve the promise as that instead
+	 * @returns {Promise<string|object>} If options.json is false, a string of the body. If options.json is true, the parsed object representing the body
+	 */
 	static getRequestData(req, options = {}) {
 		return new Promise((resolve, reject) => {
 			try {
@@ -889,7 +888,7 @@ export class PeachServer {
 								try {
 									body = JSON.parse(body);
 								} catch(err) {
-									reject(new PeachError(400, err.message));
+									reject(new PeachError(400, err.message ?? 'Error parsing JSON'));
 									return;
 								}
 								break;
